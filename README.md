@@ -41,6 +41,7 @@
 | AI 分析 | 分析热点话题 | `analyze_hotspot` |
 | 脚本生成 | 生成口播稿 | `generate_script` |
 | 视频生成 | 生成视频内容 | `generate_video` |
+| **微信发布** | **发布微信公众号** | **`publish_wechat`** |
 | 自动上传 | 上传到各大平台 | `upload_to_youtube` |
 | 一键生成 | 全流程自动化 | `auto_create` |
 
@@ -158,6 +159,32 @@ curl -X POST https://你的函数 URL.apigateway.cn-hangzhou.aliyuncs.com \
     "action": "generate_script",
     "topic": "AI 会不会取代程序员",
     "duration": 60
+  }'
+```
+
+### 发布微信公众号文章
+
+```bash
+curl -X POST https://你的函数 URL.apigateway.cn-hangzhou.aliyuncs.com \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "publish_wechat",
+    "title": "AI 会不会取代程序员",
+    "content": "<p>这里是文章内容...</p>",
+    "summary": "深度解析 AI 与程序员的未来",
+    "tags": ["AI", "程序员", "科技"]
+  }'
+```
+
+### 一键生成微信文章
+
+```bash
+curl -X POST https://你的函数 URL.apigateway.cn-hangzhou.aliyuncs.com \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "auto_create_wechat",
+    "topic": "AI 会不会取代程序员",
+    "style": "informative"
   }'
 ```
 
