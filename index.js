@@ -7,20 +7,91 @@ const http = require('http');
 
 // ==================== 配置管理 ====================
 
+/**
+ * 多 LLM 提供商配置
+ * 支持国内：阿里云百炼、智谱 AI、MiniMax、月之暗面
+ * 支持国外：OpenAI、Anthropic、Google Gemini
+ */
+const LLM_PROVIDERS = {
+    // ===== 国内 LLM =====
+    bailian: {  // 阿里云百炼（默认）
+        name: '阿里云百炼',
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        models: ['qwen3.5-plus', 'qwen3-max-2026-01-23', 'qwen3-coder-plus', 'qwen3-coder-next'],
+        defaultModel: 'qwen3.5-plus'
+    },
+    zhipu: {  // 智谱 AI
+        name: '智谱 AI',
+        baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+        models: ['glm-4', 'glm-4-air', 'glm-4-flash', 'glm-3-turbo'],
+        defaultModel: 'glm-4'
+    },
+    minimax: {  // MiniMax
+        name: 'MiniMax',
+        baseURL: 'https://api.minimax.chat/v1',
+        models: ['MiniMax-Text-01', 'MiniMax-VL-01'],
+        defaultModel: 'MiniMax-Text-01'
+    },
+    moonshot: {  // 月之暗面（Kimi）
+        name: 'Moonshot AI',
+        baseURL: 'https://api.moonshot.cn/v1',
+        models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+        defaultModel: 'moonshot-v1-32k'
+    },
+    deepseek: {  // 深度求索
+        name: 'DeepSeek',
+        baseURL: 'https://api.deepseek.com/v1',
+        models: ['deepseek-chat', 'deepseek-reasoner'],
+        defaultModel: 'deepseek-chat'
+    },
+    
+    // ===== 国外 LLM =====
+    openai: {  // OpenAI
+        name: 'OpenAI',
+        baseURL: 'https://api.openai.com/v1',
+        models: ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+        defaultModel: 'gpt-4o'
+    },
+    anthropic: {  // Anthropic (Claude)
+        name: 'Anthropic',
+        baseURL: 'https://api.anthropic.com/v1',
+        models: ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
+        defaultModel: 'claude-3-sonnet-20240229',
+        headers: {
+            'x-api-key': '${ANTHROPIC_API_KEY}',
+            'anthropic-version': '2023-06-01'
+        }
+    },
+    google: {  // Google Gemini
+        name: 'Google Gemini',
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+        models: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-1.0-pro'],
+        defaultModel: 'gemini-1.5-pro'
+    }
+};
+
 const CONFIG = {
+    // LLM 配置（支持多提供商）
+    LLM: {
+        // 当前使用的提供商（bailian | zhipu | minimax | moonshot | deepseek | openai | anthropic | google）
+        provider: process.env.LLM_PROVIDER || 'bailian',
+        
+        // API Key（根据提供商自动选择）
+        apiKey: process.env.LLM_API_KEY,
+        
+        // 模型（可选，不填则使用提供商默认模型）
+        model: process.env.LLM_MODEL,
+        
+        // 自定义 API 地址（可选，覆盖提供商默认地址）
+        baseURL: process.env.LLM_BASE_URL
+    },
+    
     // 热点数据源
     HOTSPOT_SOURCES: {
         weibo: 'https://weibo.com/hot/list',
         douyin: 'https://www.douyin.com/hot',
         youtube: 'https://www.youtube.com/feed/trending',
         twitter: 'https://twitter.com/explore/tabs/trending'
-    },
-    
-    // AI 配置
-    LLM: {
-        baseURL: process.env.LLM_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        apiKey: process.env.LLM_API_KEY,
-        model: process.env.LLM_MODEL || 'qwen-plus'
     },
     
     // YouTube 配置
@@ -864,33 +935,110 @@ async function autoCreateContent(body) {
 // ==================== 工具函数 ====================
 
 /**
- * 调用 LLM API
+ * 调用 LLM API（支持多提供商）
  */
-async function callLLM(prompt) {
+async function callLLM(prompt, options = {}) {
+    const providerName = options.provider || CONFIG.LLM.provider;
+    const provider = LLM_PROVIDERS[providerName];
+    
+    if (!provider) {
+        throw new Error(`不支持的 LLM 提供商：${providerName}。支持的提供商：${Object.keys(LLM_PROVIDERS).join(', ')}`);
+    }
+    
+    const apiKey = CONFIG.LLM.apiKey || process.env[`${providerName.toUpperCase()}_API_KEY`];
+    
+    if (!apiKey && !MOCK_MODE) {
+        throw new Error(`未配置 ${provider.name} API Key。请设置 LLM_API_KEY 或 ${providerName.toUpperCase()}_API_KEY`);
+    }
+    
     if (MOCK_MODE) {
-        log('INFO', 'MOCK_MODE 启用，跳过真实 LLM 调用');
+        log('INFO', `MOCK_MODE 启用，跳过 ${provider.name} 调用`);
         return `{"reason":"示例原因","audience":"示例受众","angles":["角度 1","角度 2","角度 3"],"controversy":"示例争议点"}`;
     }
     
+    const model = options.model || CONFIG.LLM.model || provider.defaultModel;
+    const baseURL = CONFIG.LLM.baseURL || provider.baseURL;
+    
+    log('INFO', `调用 ${provider.name} (${model})`);
+    
+    // Anthropic 特殊处理
+    if (providerName === 'anthropic') {
+        return await callAnthropic(prompt, model, apiKey, baseURL);
+    }
+    
+    // Google Gemini 特殊处理
+    if (providerName === 'google') {
+        return await callGemini(prompt, model, apiKey, baseURL);
+    }
+    
+    // 标准 OpenAI 兼容 API（阿里云、智谱、MiniMax、Moonshot、DeepSeek、OpenAI）
     const response = await axios.post(
-        `${CONFIG.LLM.baseURL}/chat/completions`,
+        `${baseURL}/chat/completions`,
         {
-            model: CONFIG.LLM.model,
+            model: model,
             messages: [
                 { role: 'user', content: prompt }
             ],
             temperature: 0.7,
-            max_tokens: 1000
+            max_tokens: 2000
         },
         {
             headers: {
-                'Authorization': `Bearer ${CONFIG.LLM.apiKey}`,
+                'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
             }
         }
     );
     
     return response.data.choices[0].message.content;
+}
+
+/**
+ * 调用 Anthropic Claude API
+ */
+async function callAnthropic(prompt, model, apiKey, baseURL) {
+    const response = await axios.post(
+        `${baseURL}/messages`,
+        {
+            model: model,
+            max_tokens: 2000,
+            messages: [
+                { role: 'user', content: prompt }
+            ]
+        },
+        {
+            headers: {
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01',
+                'Content-Type': 'application/json'
+            }
+        }
+    );
+    
+    return response.data.content[0].text;
+}
+
+/**
+ * 调用 Google Gemini API
+ */
+async function callGemini(prompt, model, apiKey, baseURL) {
+    const response = await axios.post(
+        `${baseURL}/models/${model}:generateContent?key=${apiKey}`,
+        {
+            contents: [{
+                parts: [{
+                    text: prompt
+                }]
+            }]
+        },
+        {
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        }
+    );
+    
+    return response.data.candidates[0].content.parts[0].text;
 }
 
 /**

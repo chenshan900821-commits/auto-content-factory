@@ -71,6 +71,34 @@ cp .env.example .env
 # 编辑 .env 文件，填入你的 API Key
 ```
 
+**支持多 LLM 提供商：**
+
+| 提供商 | 地区 | 推荐模型 | 获取地址 |
+|--------|------|----------|----------|
+| **阿里云百炼** | 🇨🇳 国内 | qwen3.5-plus | https://dashscope.console.aliyun.com |
+| 智谱 AI | 🇨🇳 国内 | glm-4 | https://open.bigmodel.cn |
+| MiniMax | 🇨🇳 国内 | MiniMax-Text-01 | https://api.minimax.chat |
+| 月之暗面 (Kimi) | 🇨🇳 国内 | moonshot-v1-32k | https://api.moonshot.cn |
+| DeepSeek | 🇨🇳 国内 | deepseek-chat | https://platform.deepseek.com |
+| OpenAI | 🌍 国外 | gpt-4o | https://platform.openai.com |
+| Anthropic (Claude) | 🌍 国外 | claude-3-sonnet | https://console.anthropic.com |
+| Google Gemini | 🌍 国外 | gemini-1.5-pro | https://aistudio.google.com |
+
+**配置示例：**
+```bash
+# 使用阿里云百炼（默认）
+LLM_PROVIDER=bailian
+BAILIAN_API_KEY=your-key
+
+# 或使用 OpenAI
+LLM_PROVIDER=openai
+OPENAI_API_KEY=your-key
+
+# 或使用智谱 AI
+LLM_PROVIDER=zhipu
+ZHIPU_API_KEY=your-key
+```
+
 ### 4. 本地测试
 
 ```bash
