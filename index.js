@@ -5,6 +5,8 @@
 const axios = require('axios');
 const http = require('http');
 const cheerio = require('cheerio');  // 用于解析 HTML
+const FormData = require('form-data');
+const { google } = require('googleapis');
 
 // ==================== 配置管理 ====================
 
@@ -682,10 +684,30 @@ async function getTwitterTrending(limit = 10) {
         }));
     }
 
-    // 需要 Twitter API v2
-    // 这里提供框架，实际使用需要申请 Twitter API
-    log('INFO', 'Twitter 趋势获取需要 Twitter API v2（当前返回空）');
-    return [];
+    const bearer = process.env.TWITTER_BEARER_TOKEN;
+    if (!bearer) {
+        log('INFO', '未配置 TWITTER_BEARER_TOKEN，Twitter 趋势返回空');
+        return [];
+    }
+
+    const woeid = process.env.TWITTER_WOEID || '1';
+    try {
+        const resp = await axios.get('https://api.twitter.com/1.1/trends/place.json', {
+            params: { id: woeid },
+            headers: { Authorization: `Bearer ${bearer}` },
+            timeout: 15000
+        });
+        const trends = (resp.data && resp.data[0] && resp.data[0].trends) || [];
+        return trends.slice(0, limit).map((t, i) => ({
+            platform: 'twitter',
+            title: t.name,
+            rank: typeof t.tweet_volume === 'number' ? t.tweet_volume : (1000000 - i * 1000),
+            url: t.url || 'https://twitter.com'
+        }));
+    } catch (error) {
+        log('ERROR', '获取 Twitter 趋势失败:', error.response?.data || error.message);
+        return [];
+    }
 }
 
 // ==================== AI 分析模块 ====================
@@ -862,7 +884,7 @@ async function generateTalkingHeadVideo(script) {
                         voice_id: 'zh-CN-XiaoxiaoNeural'
                     }
                 },
-                source_url: 'https://example.com/avatar.jpg'  // 数字人形象图片
+                source_url: process.env.D_ID_SOURCE_URL || 'https://example.com/avatar.jpg'
             },
             {
                 headers: {
@@ -920,13 +942,107 @@ async function generateTalkingHeadVideo(script) {
  * 生成图文视频
  */
 async function generateSlideshowVideo(script) {
-    // 可以使用 Canva API 或其他视频生成服务
-    // 这里提供框架
-    log('INFO', '图文视频生成需要集成第三方服务');
+    const webhook = process.env.SLIDESHOW_WEBHOOK_URL;
+    if (!webhook) {
+        throw new Error('未配置 SLIDESHOW_WEBHOOK_URL：请提供自建服务，POST { script, type } 并返回 JSON { video_url }');
+    }
+    log('INFO', '调用图文视频 Webhook');
+    const r = await axios.post(
+        webhook,
+        { script, type: 'slideshow' },
+        { timeout: Number(process.env.SLIDESHOW_WEBHOOK_TIMEOUT_MS) || 120000, headers: { 'Content-Type': 'application/json' } }
+    );
+    const url = r.data && (r.data.video_url || r.data.url);
+    if (!url) {
+        throw new Error('图文视频 Webhook 未返回 video_url');
+    }
     return {
-        video_url: 'pending',
-        message: '需要配置视频生成服务'
+        video_url: url,
+        message: '图文视频生成成功'
     };
+}
+
+// ==================== 微信 / YouTube 真实链路辅助 ====================
+
+async function fetchWeChatAccessToken() {
+    const appId = process.env.WECHAT_APP_ID;
+    const appSecret = process.env.WECHAT_APP_SECRET;
+    if (!appId || !appSecret) {
+        throw new Error('未配置微信公众号 APP_ID 或 APP_SECRET');
+    }
+    const tokenResponse = await axios.get('https://api.weixin.qq.com/cgi-bin/token', {
+        params: {
+            grant_type: 'client_credential',
+            appid: appId,
+            secret: appSecret
+        },
+        timeout: 10000
+    });
+    if (tokenResponse.data.errcode) {
+        throw new Error(`获取 access_token 失败：${tokenResponse.data.errmsg || tokenResponse.data.errcode}`);
+    }
+    const accessToken = tokenResponse.data.access_token;
+    if (!accessToken) {
+        throw new Error('获取 access_token 失败：响应无 access_token');
+    }
+    return accessToken;
+}
+
+/**
+ * 上传永久素材（thumb：封面图，≤64KB）
+ */
+async function uploadWeChatThumbMaterial(accessToken, imageBuffer, filename = 'cover.jpg') {
+    const url = `https://api.weixin.qq.com/cgi-bin/material/add_material?access_token=${accessToken}&type=thumb`;
+    const form = new FormData();
+    form.append('media', imageBuffer, { filename });
+    const res = await axios.post(url, form, {
+        headers: form.getHeaders(),
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+        timeout: 60000
+    });
+    if (res.data.errcode && res.data.errcode !== 0) {
+        throw new Error(`上传封面素材失败：${res.data.errmsg || res.data.errcode}`);
+    }
+    if (!res.data.media_id) {
+        throw new Error('上传封面素材失败：未返回 media_id');
+    }
+    return res.data.media_id;
+}
+
+async function resolveWeChatThumbMediaId(accessToken, cover_image) {
+    const preset = process.env.WECHAT_DEFAULT_THUMB_MEDIA_ID;
+    if (preset) {
+        return preset;
+    }
+    if (!cover_image) {
+        throw new Error('微信公众号图文需要 thumb_media_id：请传 cover_image（可访问的图片 URL），或配置 WECHAT_DEFAULT_THUMB_MEDIA_ID');
+    }
+    if (!/^https?:\/\//i.test(String(cover_image))) {
+        throw new Error('cover_image 需为 http(s) 图片地址');
+    }
+    const imgRes = await axios.get(cover_image, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 70 * 1024 });
+    const buf = Buffer.from(imgRes.data);
+    if (buf.length > 64 * 1024) {
+        throw new Error('封面图超过 64KB，请先压缩后再上传，或配置 WECHAT_DEFAULT_THUMB_MEDIA_ID');
+    }
+    return await uploadWeChatThumbMaterial(accessToken, buf, 'cover.jpg');
+}
+
+function getYouTubeOAuth2Client() {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+    if (!clientId || !clientSecret || !refreshToken) {
+        throw new Error('YouTube 上传/删除需要 OAuth：请配置 GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET、GOOGLE_REFRESH_TOKEN');
+    }
+    const oauth2Client = new google.auth.OAuth2(
+        clientId,
+        clientSecret,
+        process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://localhost'
+    );
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+    return oauth2Client;
 }
 
 // ==================== 微信发布模块 ====================
@@ -935,7 +1051,16 @@ async function generateSlideshowVideo(script) {
  * 发布到微信公众号
  */
 async function publishWeChat(body) {
-    const { title, content, cover_image, summary, tags } = body;
+    const {
+        title,
+        content,
+        cover_image,
+        summary,
+        author,
+        content_source_url,
+        need_open_comment,
+        only_fans_can_comment
+    } = body;
     
     if (!title || !content) {
         throw new Error('缺少必需参数：title 和 content');
@@ -953,75 +1078,42 @@ async function publishWeChat(body) {
         });
     }
     
-    // 微信公众号 API 需要 access_token
-    // 1. 获取 access_token
-    const appId = process.env.WECHAT_APP_ID;
-    const appSecret = process.env.WECHAT_APP_SECRET;
+    const accessToken = await fetchWeChatAccessToken();
+    const thumbMediaId = await resolveWeChatThumbMediaId(accessToken, cover_image);
     
-    if (!appId || !appSecret) {
-        throw new Error('未配置微信公众号 APP_ID 或 APP_SECRET');
-    }
-    
-    const tokenResponse = await axios.get(
-        'https://api.weixin.qq.com/cgi-bin/token',
-        {
-            params: {
-                grant_type: 'client_credential',
-                appid: appId,
-                secret: appSecret
+    const draftPayload = {
+        articles: [
+            {
+                title,
+                author: author || process.env.WECHAT_ARTICLE_AUTHOR || 'AutoContent Factory',
+                digest: (summary || title).slice(0, 120),
+                content,
+                content_source_url: content_source_url || '',
+                thumb_media_id: thumbMediaId,
+                need_open_comment: need_open_comment ? 1 : 0,
+                only_fans_can_comment: only_fans_can_comment ? 1 : 0
             }
-        }
-    );
-    
-    const accessToken = tokenResponse.data.access_token;
-    
-    // 2. 上传封面图片（如果有）
-    let mediaId = null;
-    if (cover_image) {
-        // 需要先下载图片，然后上传到微信素材库
-        // 这里简化处理
-        log('INFO', '上传封面图片到微信素材库');
-    }
-    
-    // 3. 发送图文消息
-    const postData = {
-        filter: {
-            is_to_all: false,
-            tag_id: 0
-        },
-        mpnews: {
-            mpnews_articles: [
-                {
-                    title: title,
-                    thumb_media_id: mediaId || 'default-media-id',
-                    author: 'AutoContent Factory',
-                    digest: summary || title,
-                    show_cover_pic: cover_image ? 1 : 0,
-                    content: content,
-                    content_source_url: ''
-                }
-            ]
-        },
-        msgtype: 'mpnews'
+        ]
     };
     
     const publishResponse = await axios.post(
-        `https://api.weixin.qq.com/cgi-bin/message/mass/sendall?access_token=${accessToken}`,
-        postData
+        `https://api.weixin.qq.com/cgi-bin/draft/add?access_token=${accessToken}`,
+        draftPayload,
+        { timeout: 60000 }
     );
     
-    if (publishResponse.data.errcode === 0) {
-        return response(200, {
-            success: true,
-            data: {
-                message: '文章发布成功',
-                msg_id: publishResponse.data.msg_id,
-                article_url: `https://mp.weixin.qq.com/s/${publishResponse.data.msg_id}`
-            }
-        });
-    } else {
-        throw new Error(`微信发布失败：${publishResponse.data.errmsg}`);
+    if (publishResponse.data.errcode && publishResponse.data.errcode !== 0) {
+        throw new Error(`微信草稿失败：${publishResponse.data.errmsg || publishResponse.data.errcode}`);
     }
+    
+    return response(200, {
+        success: true,
+        data: {
+            message: '文章已写入公众号草稿箱，请在微信公众平台后台审核并发布',
+            media_id: publishResponse.data.media_id,
+            item: publishResponse.data.item
+        }
+    });
 }
 
 // ==================== YouTube 上传模块 ====================
@@ -1031,10 +1123,6 @@ async function publishWeChat(body) {
  */
 async function uploadToYouTube(body) {
     const { video_url, title, description, tags, privacy = 'private' } = body;
-    
-    if (!process.env.YOUTUBE_API_KEY && !isMockMode()) {
-        throw new Error('未配置 YouTube API Key');
-    }
     
     if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，模拟上传 YouTube 视频');
@@ -1047,29 +1135,46 @@ async function uploadToYouTube(body) {
         });
     }
     
-    // YouTube Data API v3
-    // 需要 OAuth 2.0 认证
+    if (!video_url) {
+        throw new Error('缺少必需参数：video_url（可访问的视频文件 URL）');
+    }
     
-    const uploadData = {
-        snippet: {
-            title,
-            description,
-            tags,
-            categoryId: '22'  // People & Blogs
+    const auth = getYouTubeOAuth2Client();
+    const youtube = google.youtube({ version: 'v3', auth });
+    
+    const videoStream = await axios.get(video_url, {
+        responseType: 'stream',
+        timeout: 0,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity
+    });
+    
+    const result = await youtube.videos.insert({
+        part: ['snippet', 'status'],
+        requestBody: {
+            snippet: {
+                title: title || 'Untitled',
+                description: description || '',
+                tags: Array.isArray(tags) ? tags : [],
+                categoryId: body.category_id || '22'
+            },
+            status: {
+                privacyStatus: privacy,
+                selfDeclaredMadeForKids: false
+            }
         },
-        status: {
-            privacyStatus: privacy
+        media: {
+            body: videoStream.data
         }
-    };
+    });
     
-    // 实际上传需要 multipart/form-data
-    // 这里提供框架
-    
+    const vid = result.data.id;
     return response(200, {
         success: true,
         data: {
-            message: '视频上传成功（示例）',
-            video_id: 'youtube_video_id'
+            message: '视频上传成功',
+            video_id: vid,
+            url: `https://www.youtube.com/watch?v=${vid}`
         }
     });
 }
@@ -1129,13 +1234,19 @@ async function deleteYouTubeVideo(body) {
         });
     }
     
-    // YouTube Data API v3
-    // 需要 OAuth 2.0 认证
+    if (!video_id) {
+        throw new Error('缺少必需参数：video_id');
+    }
+    
+    const auth = getYouTubeOAuth2Client();
+    const youtube = google.youtube({ version: 'v3', auth });
+    await youtube.videos.delete({ id: video_id });
     
     return response(200, {
         success: true,
         data: {
-            message: `视频 ${video_id} 已删除（示例）`
+            message: `视频 ${video_id} 已删除`,
+            video_id
         }
     });
 }
@@ -1146,7 +1257,7 @@ async function deleteYouTubeVideo(body) {
  * 自动创建微信公众号文章（完整流程）
  */
 async function autoCreateWeChatArticle(body) {
-    const { topic, platform = 'weibo', style = 'informative', provider } = body;
+    const { topic, platform = 'weibo', style = 'informative', provider, cover_image } = body;
     
     log('INFO', `开始自动创建微信文章：${topic}`);
     
@@ -1169,7 +1280,7 @@ async function autoCreateWeChatArticle(body) {
         title: topic,
         content: articleContent,
         summary: `关于${topic}的深度解析`,
-        tags: [topic.replace(/\s/g, ''), 'AI 生成', '热点解读']
+        cover_image: cover_image || process.env.WECHAT_DEFAULT_COVER_IMAGE_URL
     });
     
     return response(200, {
