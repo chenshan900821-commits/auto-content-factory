@@ -1,4 +1,8 @@
 // 测试实时热点搜索功能
+// 未配置外网抓取或易 403 时默认 MOCK；要测真实接口：TEST_REAL=true node test-realtime-hotspots.js
+if (process.env.TEST_REAL !== 'true') {
+    process.env.MOCK_MODE = 'true';
+}
 const { handler } = require('./index.js');
 
 async function testRealtimeHotspots() {

@@ -108,7 +108,20 @@ const CONFIG = {
     }
 };
 
-const MOCK_MODE = process.env.MOCK_MODE === 'true';
+/** 每次读取环境变量，便于同一进程内测试脚本切换 MOCK / 提供商 */
+function isMockMode() {
+    return process.env.MOCK_MODE === 'true';
+}
+
+function currentLlmProvider(explicit) {
+    return explicit || process.env.LLM_PROVIDER || 'bailian';
+}
+
+function hasLlmApiKey(providerName) {
+    const p = providerName || currentLlmProvider();
+    if (process.env.LLM_API_KEY) return true;
+    return !!process.env[`${String(p).toUpperCase()}_API_KEY`];
+}
 
 // ==================== 主入口 ====================
 
@@ -142,19 +155,31 @@ exports.handler = async (event, context) => {
             
             // 获取微博热搜
             case 'get_weibo_hot':
-                return await getWeiboHotRealtime(body);
+                return response(200, {
+                    success: true,
+                    data: await getWeiboHotRealtime(body)
+                });
             
             // 获取知乎热榜
             case 'get_zhihu_hot':
-                return await getZhihuHotRealtime(body);
+                return response(200, {
+                    success: true,
+                    data: await getZhihuHotRealtime(body)
+                });
             
             // 获取抖音热点
             case 'get_douyin_hot':
-                return await getDouyinHotRealtime(body);
+                return response(200, {
+                    success: true,
+                    data: await getDouyinHotRealtime(body)
+                });
             
             // 获取百度热搜
             case 'get_baidu_hot':
-                return await getBaiduHotRealtime(body);
+                return response(200, {
+                    success: true,
+                    data: await getBaiduHotRealtime(body)
+                });
             
             case 'analyze_hotspot':
                 return await analyzeHotspot(body);
@@ -196,7 +221,7 @@ exports.handler = async (event, context) => {
                     success: true, 
                     status: 'healthy',
                     timestamp: new Date().toISOString(),
-                    mock: MOCK_MODE
+                    mock: isMockMode()
                 });
             
             default:
@@ -305,16 +330,15 @@ async function searchHotspots(body) {
 async function getWeiboHotRealtime(body) {
     const { limit = 10 } = body;
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟微博热搜数据');
-        const data = Array.from({ length: limit }).map((_, i) => ({
+        return Array.from({ length: limit }).map((_, i) => ({
             platform: 'weibo',
             title: `微博热搜示例主题 ${i + 1}`,
             rank: i + 1,
             hot_value: 100000 - i * 1234,
             url: 'https://weibo.com'
         }));
-        return response(200, { success: true, data });
     }
     
     try {
@@ -350,16 +374,15 @@ async function getWeiboHotRealtime(body) {
 async function getZhihuHotRealtime(body) {
     const { limit = 10 } = body;
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟知乎热榜数据');
-        const data = Array.from({ length: limit }).map((_, i) => ({
+        return Array.from({ length: limit }).map((_, i) => ({
             platform: 'zhihu',
             title: `知乎热榜示例问题 ${i + 1}`,
             rank: i + 1,
             hot_value: 50000 - i * 800,
             url: 'https://www.zhihu.com/hot'
         }));
-        return response(200, { success: true, data });
     }
     
     try {
@@ -394,16 +417,15 @@ async function getZhihuHotRealtime(body) {
 async function getDouyinHotRealtime(body) {
     const { limit = 10 } = body;
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟抖音热点数据');
-        const data = Array.from({ length: limit }).map((_, i) => ({
+        return Array.from({ length: limit }).map((_, i) => ({
             platform: 'douyin',
             title: `抖音热点示例话题 ${i + 1}`,
             rank: i + 1,
             hot_value: 80000 - i * 1000,
             url: 'https://www.douyin.com'
         }));
-        return response(200, { success: true, data });
     }
     
     try {
@@ -428,16 +450,15 @@ async function getDouyinHotRealtime(body) {
 async function getBaiduHotRealtime(body) {
     const { limit = 10 } = body;
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟百度热搜数据');
-        const data = Array.from({ length: limit }).map((_, i) => ({
+        return Array.from({ length: limit }).map((_, i) => ({
             platform: 'baidu',
             title: `百度热搜示例 ${i + 1}`,
             rank: i + 1,
             hot_value: 90000 - i * 1100,
             url: 'https://top.baidu.com'
         }));
-        return response(200, { success: true, data });
     }
     
     try {
@@ -479,6 +500,16 @@ async function getBaiduHotRealtime(body) {
  * 搜索微博
  */
 async function searchWeibo(keyword, limit = 10) {
+    if (isMockMode()) {
+        log('INFO', 'MOCK_MODE 启用，返回模拟微博搜索结果');
+        return Array.from({ length: limit }).map((_, i) => ({
+            platform: 'weibo',
+            title: `微博搜索示例 ${i + 1}（关键词：${keyword}）`,
+            source: '微博搜索',
+            url: 'https://weibo.com'
+        }));
+    }
+
     try {
         const response = await axios.get('https://s.weibo.com/weibo', {
             params: { q: keyword },
@@ -514,6 +545,16 @@ async function searchWeibo(keyword, limit = 10) {
  * 搜索知乎
  */
 async function searchZhihu(keyword, limit = 10) {
+    if (isMockMode()) {
+        log('INFO', 'MOCK_MODE 启用，返回模拟知乎搜索结果');
+        return Array.from({ length: limit }).map((_, i) => ({
+            platform: 'zhihu',
+            title: `知乎搜索示例 ${i + 1}（关键词：${keyword}）`,
+            url: 'https://www.zhihu.com',
+            source: '知乎搜索'
+        }));
+    }
+
     try {
         const response = await axios.get('https://www.zhihu.com/api/v3/search/search', {
             params: { q: keyword, type: 'content', limit },
@@ -539,6 +580,16 @@ async function searchZhihu(keyword, limit = 10) {
  * 搜索百度
  */
 async function searchBaidu(keyword, limit = 10) {
+    if (isMockMode()) {
+        log('INFO', 'MOCK_MODE 启用，返回模拟百度搜索结果');
+        return Array.from({ length: limit }).map((_, i) => ({
+            platform: 'baidu',
+            title: `百度搜索示例 ${i + 1}（关键词：${keyword}）`,
+            url: 'https://www.baidu.com',
+            source: '百度搜索'
+        }));
+    }
+
     try {
         const response = await axios.get('https://www.baidu.com/s', {
             params: { wd: keyword, rn: limit },
@@ -577,7 +628,7 @@ async function searchBaidu(keyword, limit = 10) {
  * 获取 YouTube 趋势视频
  */
 async function getYouTubeTrending(limit = 10) {
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟 YouTube 趋势数据');
         return Array.from({ length: limit }).map((_, i) => ({
             platform: 'youtube',
@@ -588,7 +639,7 @@ async function getYouTubeTrending(limit = 10) {
         }));
     }
     
-    if (!CONFIG.YOUTUBE.apiKey) {
+    if (!process.env.YOUTUBE_API_KEY) {
         log('WARN', '未配置 YouTube API Key');
         return [];
     }
@@ -600,7 +651,7 @@ async function getYouTubeTrending(limit = 10) {
                 chart: 'mostPopular',
                 maxResults: limit,
                 regionCode: 'US',
-                key: CONFIG.YOUTUBE.apiKey
+                key: process.env.YOUTUBE_API_KEY
             }
         });
         
@@ -621,9 +672,19 @@ async function getYouTubeTrending(limit = 10) {
  * 获取 Twitter 趋势
  */
 async function getTwitterTrending(limit = 10) {
+    if (isMockMode()) {
+        log('INFO', 'MOCK_MODE 启用，返回模拟 Twitter 趋势数据');
+        return Array.from({ length: limit }).map((_, i) => ({
+            platform: 'twitter',
+            title: `Twitter Trending 示例 ${i + 1}`,
+            rank: 100000 - i * 111,
+            url: 'https://twitter.com'
+        }));
+    }
+
     // 需要 Twitter API v2
     // 这里提供框架，实际使用需要申请 Twitter API
-    log('INFO', 'Twitter 趋势获取需要 Twitter API v2');
+    log('INFO', 'Twitter 趋势获取需要 Twitter API v2（当前返回空）');
     return [];
 }
 
@@ -635,7 +696,7 @@ async function getTwitterTrending(limit = 10) {
 async function analyzeHotspot(body) {
     const { topic, platform, hot_value } = body;
     
-    if (!CONFIG.LLM.apiKey && !MOCK_MODE) {
+    if (!hasLlmApiKey() && !isMockMode()) {
         throw new Error('未配置 LLM API Key');
     }
     
@@ -680,15 +741,15 @@ async function analyzeHotspot(body) {
 /**
  * 生成口播稿核心逻辑（供内部复用）
  */
-async function generateScriptCore({ topic, style = 'informative', duration = 60 }) {
-    if (!CONFIG.LLM.apiKey && !MOCK_MODE) {
+async function generateScriptCore({ topic, style = 'informative', duration = 60, provider } = {}) {
+    if (!hasLlmApiKey(currentLlmProvider(provider)) && !isMockMode()) {
         throw new Error('未配置 LLM API Key');
     }
     
     // 计算字数（中文约 4 字/秒）
     const targetWords = duration * 4;
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟脚本内容');
         const mockScript = `【模拟脚本】主题：${topic}，风格：${style}，预期时长：${duration} 秒。`;
         return {
@@ -713,7 +774,7 @@ async function generateScriptCore({ topic, style = 'informative', duration = 60 
 - 避免：AI 味、说教感
 
 请直接输出口播稿，不要其他说明。
-`);
+`, { provider: currentLlmProvider(provider) });
     
     return {
         script,
@@ -726,9 +787,9 @@ async function generateScriptCore({ topic, style = 'informative', duration = 60 
  * 生成口播稿（HTTP Handler）
  */
 async function generateScript(body) {
-    const { topic, style = 'informative', duration = 60 } = body;
+    const { topic, style = 'informative', duration = 60, provider } = body;
     
-    const data = await generateScriptCore({ topic, style, duration });
+    const data = await generateScriptCore({ topic, style, duration, provider });
     
     return response(200, {
         success: true,
@@ -742,11 +803,11 @@ async function generateScript(body) {
  * 生成视频核心逻辑
  */
 async function generateVideoCore({ script, video_type = 'talking_head' }) {
-    if (!CONFIG.VIDEO.apiKey && !MOCK_MODE) {
+    if (!process.env.VIDEO_API_KEY && !isMockMode()) {
         throw new Error('未配置视频生成 API Key');
     }
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟视频生成结果');
         return {
             video_url: 'https://example.com/mock-video.mp4',
@@ -805,7 +866,7 @@ async function generateTalkingHeadVideo(script) {
             },
             {
                 headers: {
-                    'Authorization': `Basic ${CONFIG.VIDEO.apiKey}`,
+                    'Authorization': `Basic ${process.env.VIDEO_API_KEY}`,
                     'Content-Type': 'application/json'
                 }
             }
@@ -832,7 +893,7 @@ async function generateTalkingHeadVideo(script) {
                 `https://api.d-id.com/talks/${talkId}`,
                 {
                     headers: {
-                        'Authorization': `Basic ${CONFIG.VIDEO.apiKey}`
+                        'Authorization': `Basic ${process.env.VIDEO_API_KEY}`
                     }
                 }
             );
@@ -880,7 +941,7 @@ async function publishWeChat(body) {
         throw new Error('缺少必需参数：title 和 content');
     }
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，模拟发布微信公众号文章');
         return response(200, {
             success: true,
@@ -971,11 +1032,11 @@ async function publishWeChat(body) {
 async function uploadToYouTube(body) {
     const { video_url, title, description, tags, privacy = 'private' } = body;
     
-    if (!CONFIG.YOUTUBE.apiKey && !MOCK_MODE) {
+    if (!process.env.YOUTUBE_API_KEY && !isMockMode()) {
         throw new Error('未配置 YouTube API Key');
     }
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，模拟上传 YouTube 视频');
         return response(200, {
             success: true,
@@ -1017,11 +1078,11 @@ async function uploadToYouTube(body) {
  * 列出 YouTube 频道视频
  */
 async function listYouTubeVideos() {
-    if (!CONFIG.YOUTUBE.apiKey && !MOCK_MODE) {
+    if (!process.env.YOUTUBE_API_KEY && !isMockMode()) {
         throw new Error('未配置 YouTube API Key');
     }
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', 'MOCK_MODE 启用，返回模拟频道视频列表');
         return response(200, {
             success: true,
@@ -1037,11 +1098,11 @@ async function listYouTubeVideos() {
         {
             params: {
                 part: 'snippet',
-                channelId: CONFIG.YOUTUBE.channelId,
+                channelId: process.env.YOUTUBE_CHANNEL_ID,
                 order: 'date',
                 type: 'video',
                 maxResults: 10,
-                key: CONFIG.YOUTUBE.apiKey
+                key: process.env.YOUTUBE_API_KEY
             }
         }
     );
@@ -1058,7 +1119,7 @@ async function listYouTubeVideos() {
 async function deleteYouTubeVideo(body) {
     const { video_id } = body;
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', `MOCK_MODE 启用，模拟删除视频 ${video_id}`);
         return response(200, {
             success: true,
@@ -1085,7 +1146,7 @@ async function deleteYouTubeVideo(body) {
  * 自动创建微信公众号文章（完整流程）
  */
 async function autoCreateWeChatArticle(body) {
-    const { topic, platform = 'weibo', style = 'informative' } = body;
+    const { topic, platform = 'weibo', style = 'informative', provider } = body;
     
     log('INFO', `开始自动创建微信文章：${topic}`);
     
@@ -1094,7 +1155,8 @@ async function autoCreateWeChatArticle(body) {
     const scriptResult = await generateScriptCore({
         topic,
         style,
-        duration: 300  // 5 分钟阅读时长
+        duration: 300,  // 5 分钟阅读时长
+        provider
     });
     
     // 将脚本转换为微信文章格式（添加 HTML 标签）
@@ -1163,7 +1225,7 @@ function formatWeChatArticle(script, topic) {
  * 自动创建内容（完整流程）
  */
 async function autoCreateContent(body) {
-    const { topic, platform = 'youtube', style = 'informative' } = body;
+    const { topic, platform = 'youtube', style = 'informative', provider } = body;
     
     log('INFO', `开始自动创建内容：${topic}`);
     
@@ -1172,7 +1234,8 @@ async function autoCreateContent(body) {
     const scriptResult = await generateScriptCore({
         topic,
         style,
-        duration: 60
+        duration: 60,
+        provider
     });
     
     const script = scriptResult.script;
@@ -1214,26 +1277,26 @@ async function autoCreateContent(body) {
  * 调用 LLM API（支持多提供商）
  */
 async function callLLM(prompt, options = {}) {
-    const providerName = options.provider || CONFIG.LLM.provider;
+    const providerName = currentLlmProvider(options.provider);
     const provider = LLM_PROVIDERS[providerName];
     
     if (!provider) {
         throw new Error(`不支持的 LLM 提供商：${providerName}。支持的提供商：${Object.keys(LLM_PROVIDERS).join(', ')}`);
     }
     
-    const apiKey = CONFIG.LLM.apiKey || process.env[`${providerName.toUpperCase()}_API_KEY`];
+    const apiKey = process.env.LLM_API_KEY || process.env[`${providerName.toUpperCase()}_API_KEY`];
     
-    if (!apiKey && !MOCK_MODE) {
+    if (!apiKey && !isMockMode()) {
         throw new Error(`未配置 ${provider.name} API Key。请设置 LLM_API_KEY 或 ${providerName.toUpperCase()}_API_KEY`);
     }
     
-    if (MOCK_MODE) {
+    if (isMockMode()) {
         log('INFO', `MOCK_MODE 启用，跳过 ${provider.name} 调用`);
         return `{"reason":"示例原因","audience":"示例受众","angles":["角度 1","角度 2","角度 3"],"controversy":"示例争议点"}`;
     }
     
-    const model = options.model || CONFIG.LLM.model || provider.defaultModel;
-    const baseURL = CONFIG.LLM.baseURL || provider.baseURL;
+    const model = options.model || process.env.LLM_MODEL || provider.defaultModel;
+    const baseURL = process.env.LLM_BASE_URL || provider.baseURL;
     
     log('INFO', `调用 ${provider.name} (${model})`);
     
@@ -1376,7 +1439,8 @@ if (require.main === module) {
         });
     });
     
-    server.listen(PORT, () => {
-        log('INFO', `本地开发服务器已启动，端口：${PORT}，MOCK_MODE=${MOCK_MODE}`);
+    const HOST = process.env.HOST || '127.0.0.1';
+    server.listen(PORT, HOST, () => {
+        log('INFO', `本地开发服务器已启动，http://${HOST}:${PORT}，MOCK_MODE=${isMockMode()}`);
     });
 }

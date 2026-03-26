@@ -1,4 +1,7 @@
-// 直接测试微信公众号发布功能
+// 直接测试微信公众号发布功能（默认 MOCK，无需 Key；真实链路：TEST_REAL=true）
+if (process.env.TEST_REAL !== 'true') {
+    process.env.MOCK_MODE = 'true';
+}
 const { handler } = require('./index.js');
 
 async function test() {

@@ -1,7 +1,7 @@
 // 测试微信公众号发布
 const axios = require('axios');
 
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = 'http://127.0.0.1:8000';
 
 async function testPublish() {
     console.log('📝 开始测试微信公众号发布...\n');
